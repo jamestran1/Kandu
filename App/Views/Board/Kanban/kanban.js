@@ -14,11 +14,97 @@
         S.head.boards.callback.add('kanban', S.kanban.list.resize);
 
         //add click & drag capabilities to lists & cards
+        S.kanban.list.menu.init();
         S.kanban.list.drag.init();
         S.kanban.card.drag.init();
 
-        //add event for detecting message displayed
+        //add events for message popup
         $('.board .message').on('DOMSubtreeModified', S.kanban.list.resize);
+        $('.board .message .btn-close').on('click', () => { $('.board .message').addClass('hide').hide(); });
+
+        //add event for horizontal scrollbar
+        $('.kanban > .scroller .scrollbar').on('mousedown', S.kanban.scroll.start);
+    },
+
+    scroll: {
+        selected: null,
+
+        resize: function () {
+            //check horizonal scrollbar
+            const lists = $('.kanban .lists');
+            const scroller = $('.kanban > .scroller');
+            const scrollbar = $('.kanban > .scroller .scrollbar');
+            const win = S.window.pos();
+            let w = 0;
+            let scrollW = scroller.width();
+            let pos = lists.position();
+            pos.width = lists.width();
+            //get total width of all lists
+            $('.lists .columns > div').each((e) => {
+                w += $(e).width();
+            });
+            if (w > win.w) {
+                //lists wider than window
+                scroller.removeClass('hide');
+                scrollbar.css({ width: (scrollW / w) * win.w });
+            } else {
+                //lists smaller than window width
+                scroller.addClass('hide');
+            }
+        },
+
+        start: function (e) {
+            e.cancelBubble = true;
+            e.stopPropagation();
+            e.preventDefault();
+            const lists = $('.kanban .lists');
+            const scroller = $('.kanban > .scroller');
+            const scrollbar = $('.kanban > .scroller .scrollbar');
+            const win = S.window.pos();
+            let w = 0;
+            let scrollW = scroller.width();
+            let pos = lists.position();
+            pos.width = lists.width();
+            //get total width of all lists
+            $('.lists .columns > div').each((e) => {
+                w += $(e).width();
+            });
+
+            S.kanban.scroll.selected = {
+                scrollbar: scrollbar,
+                columns: lists.find('.columns'),
+                width: win.w,
+                barWidth: (scrollW / w) * win.w,
+                listsW: w,
+                cursorX: e.clientX,
+                currentX: e.clientX,
+                barX: scrollbar.offset().left
+            };
+            $('body').on('mousemove', S.kanban.scroll.move);
+            $('body').on('mouseup', S.kanban.scroll.stop);
+            S.kanban.scroll.animate.call(S.kanban.scroll);
+        },
+        move: function (e) {
+            S.kanban.scroll.selected.currentX = e.clientX;
+        },
+        animate: function () {
+            const scroll = S.kanban.scroll.selected;
+            if (scroll == null) { return; }
+            const curr = scroll.currentX - scroll.cursorX - (10 - scroll.barX);
+            let perc = (100 / (scroll.width - scroll.barWidth)) * curr;
+            if (perc > 100) { perc = 100; }
+            if (perc < 0) { perc = 0; }
+            scroll.scrollbar.css({ left: ((scroll.width - scroll.barWidth - 20) / 100) * perc });
+            scroll.columns.css({ left: -1 * (((scroll.listsW - scroll.width) / 100) * perc) });
+            requestAnimationFrame(() => {
+                S.kanban.scroll.animate.call(S.kanban.scroll);
+            });
+        }, 
+        stop: function (e) {
+            $('body').off('mousemove', S.kanban.scroll.move);
+            $('body').off('mouseup', S.kanban.scroll.stop);
+            S.kanban.scroll.selected = null;
+        }
     },
 
     list: {
@@ -43,23 +129,132 @@
                     $('.lists .add-list').before(d);
                     var lists = $('.lists .list');
                     var list = lists[lists.length - 1];
+                    S.kanban.list.menu.init(list);
                     S.kanban.list.drag.init(list);
                 });
             }
         },
 
-        resize: function () {
-            var lists = $('.kanban .lists');
-            var pos = lists.position();
-            var win = S.window.pos();
-            var h = lists.children().first().height();
-            lists.css({ height: win.h - pos.top + win.scrolly });
-            if (h + pos.top >= win.h && (S.head.boards.boardsMenuBg.hasClass('hide') || (!S.head.boards.boardsMenuBg.hasClass('hide') && $('.boards-menu').hasClass('always-show')))) {
-                lists.css({ marginBottom: h - win.h + pos.top - win.scrolly });
-            } else {
-                lists.css({ marginBottom: '' });
+        getId: function (elem) {
+            let e = $(elem);
+            if (!e.hasClass('list')) {
+                e = e.parents('.list');
+                if (e.length > 0) {
+                    e = $(e[0]);
+                } else {
+                    return null;
+                }
             }
-            
+            const c = e.get().className.split(' ');
+            for (let x = 0; x < c.length; x++) {
+                if (c[x].indexOf('id-') == 0) {
+                    return parseInt(c[x].replace('id-', ''));
+                }
+            }
+            return null;
+        },
+
+        resize: function () {
+            const id = typeof arguments[0] == 'string' ? arguments[0] : null;
+            const lists = $('.kanban .lists');
+            const pos = lists.position();
+            const win = S.window.pos();
+            let h = win.h - pos.top - 85;
+
+            //check horizontal scrollbar
+            S.kanban.scroll.resize();
+
+            lists.css({ height: win.h - pos.top });
+            //display scrollbars on lists
+            $('.lists .list' + (id ? (' .id-' + id) : '')).each(function (e) {
+                const list = $(e);
+                const items = list.find('.items');
+                const foot = list.find('.form-new-card');
+                const foot2 = list.find('.btn-add-card');
+                const footH = foot.height() + foot2.height();
+                const scrollable = list.find('.scrollable');
+                const scrollbar = list.find('.scrollbar');
+                scrollable.css({ maxHeight: h - footH });
+                const itemsH = items.height();
+                if (itemsH > h - footH) {
+                    //show scrollbar
+                    if (!scrollable.hasClass('scroll')) {
+                        scrollable.addClass('scroll');
+                        //add scroll bar mouse events
+                        scrollbar.on('mousedown', S.kanban.list.scroll.start);
+                    }
+                    list.find('.scroller').css({ height: h - footH - 7 });
+                    //update scrollbar height
+                    scrollbar.css({ height: ((h - footH - 7) / itemsH) * (h - footH) });
+                    //check scrollTo position
+                } else {
+                    //hide scrollbar
+                    if (scrollable.hasClass('scroll')) {
+                        scrollable.removeClass('scroll');
+                        //remove scroll bar mouse events
+                        scrollbar.off('mousedown', S.kanban.list.scroll.start);
+                    }
+                }
+            });
+        },
+
+        scroll: {
+            selected: { scrollable: null, height: null, itemsH: null },
+            start: function (e) {
+                e.cancelBubble = true;
+                e.stopPropagation();
+                e.preventDefault();
+                const win = S.window.pos();
+                const lists = $('.kanban .lists');
+                const pos = lists.position();
+                const list = $(e.target).parents('.list');
+                const scrollbar = list.find('.scrollbar');
+                const scroller = list.find('.scroller');
+                const items = list.find('.items');
+                const foot = list.find('.form-new-card');
+                const foot2 = list.find('.btn-add-card');
+                const footH = foot.height() + foot2.height();
+                const height = win.h - pos.top - footH - 85;
+                items.addClass('scrolling');
+                S.kanban.list.scroll.selected = {
+                    scrollbar: scrollbar,
+                    height: height,
+                    barHeight: ((height) / items.height()) * height,
+                    items: items,
+                    itemsH: items.height(),
+                    offsetY: scroller.offset().top,
+                    cursorY: e.clientY,
+                    currentY: e.clientY,
+                    barY: scrollbar.offset().top
+                };
+                $('body').on('mousemove', S.kanban.list.scroll.move);
+                $('body').on('mouseup', S.kanban.list.scroll.stop);
+                S.kanban.list.scroll.animate.call(S.kanban.list.scroll);
+            },
+            move: function (e) {
+                S.kanban.list.scroll.selected.currentY = e.clientY;
+            },
+
+            animate: function () {
+                const scroll = S.kanban.list.scroll.selected;
+                if (scroll == null) { return;}
+                const curr = scroll.currentY - scroll.cursorY - (scroll.offsetY - scroll.barY);
+                let perc = (100 / (scroll.height - scroll.barHeight)) * curr;
+                if (perc > 100) { perc = 100; }
+                if (perc < 0) { perc = 0;}
+                scroll.scrollbar.css({ top: ((scroll.height - scroll.barHeight) / 100) * perc });
+                scroll.items.css({ top: -1 * (((scroll.itemsH - scroll.height) / 100) * perc) });
+                requestAnimationFrame(() => {
+                    S.kanban.list.scroll.animate.call(S.kanban.list.scroll);
+                });
+            },
+
+            stop: function () {
+                $('body').off('mousemove', S.kanban.list.scroll.move);
+                $('body').off('mouseup', S.kanban.list.scroll.stop);
+                S.kanban.list.scroll.selected.items.removeClass('scrolling');
+                S.kanban.list.scroll.selected = null;
+            }
         },
 
         drag: {
@@ -68,8 +263,8 @@
             current: { listId: null, list: null, side: 'left', pos:0},
 
             init: function (elems) {
-                var selector = elems || '.lists .list .list-head';
-                $(selector).each(function (item) {
+                var selector = elems || '.lists .list';
+                $(selector).find('.list-head').each(function (item) {
                     var listElem = $(item);
                     S.drag.add(listElem, listElem.parent(),
                         //onStart  /////////////////////////////////////////////////////////////////////////////////
@@ -209,6 +404,51 @@
                 });
                 S.kanban.list.drag.geometry = geo;
             }
+        },
+
+        menu: {
+            selected: null,
+
+            init: function (elems) {
+                const selector = elems || '.lists .list';
+                $(selector).find('.list-head .more').off().on('click', S.kanban.list.menu.show);
+            },
+
+            show: function (e) {
+                //remove existing menu
+                $('.list-menu').remove();
+                //add new menu instance
+                const menu_button = $(e.target);
+                const listid = S.kanban.list.getId(menu_button);
+                S.kanban.list.menu.selected = listid;
+                $('body').append($('#template_listmenu').html());
+                const menu = $('.list-menu');
+                //reposition menu
+                const pos = menu_button.offset();
+                $('.list-menu').css({ left: pos.left, top: pos.top + 25 });
+                //add menu click events
+                menu.find('.btn-close').on('click', function () { menu.remove(); });
+                menu.find('.archive-list').on('click', S.kanban.list.archive);
+                //add body click to hide menu
+                $('body').on('click', S.kanban.list.menu.bodyClick);
+            },
+
+            bodyClick: function () {
+                $('body').off('click', S.kanban.list.menu.bodyClick);
+                $('.list-menu').remove();
+            }
+        },
+
+        archive: function () {
+            const listid = S.kanban.list.menu.selected;
+            S.ajax.post('Lists/Archive', { boardId: S.board.id, listId: listid },
+                function (d) {
+                    $('.list.id-' + listid).remove();
+                },
+                function () {
+                    S.message.show('.board .message', "error", S.message.error.generic);
+                }
+            );
         }
     },
 
@@ -236,7 +476,11 @@
                 });
 
                 form.animate({ height: 80 }, {
-                    duration: 3000, complete: () => {
+                    duration: 3000,
+                    progress: () => {
+                        S.kanban.list.resize(listid);
+                    },
+                    complete: () => {
                         form.removeAttr('style');
                     }
                 });
@@ -254,14 +498,17 @@
                 clone.html(field.val().replace(/\n/g, '<br/>') + '</br>');
                 field.css({ height: clone.height() });
                 field.scrollTop = 0;
+                S.kanban.list.resize(listid);
             },
 
             hide: function (listid) {
                 var list = $('.list.id-' + listid);
                 list.find('.form-new-card').removeClass('show').addClass('cancel');
+                S.kanban.list.resize(listid);
                 setTimeout(function () {
                     list.find('.form-new-card').removeClass('cancel').addClass('hide').html('');
                     list.find('.btn-add-card').show();
+                    S.kanban.list.resize(listid);
                 }, 310);
             },
 
@@ -284,6 +531,9 @@
                         item.animate({ height: h }, {
                             duration: 1000,
                             easing: 'ease-in-out',
+                            progress: () => {
+                                S.kanban.list.resize(listid);
+                            },
                             complete: function () {
                                 item.css({ height:''});
                             }
@@ -473,6 +723,7 @@
                                 cardlist.each(function (card) {
                                     cards.push(S.util.element.getClassId(card));
                                 });
+                                S.kanban.list.resize(listId);
 
                                 S.ajax.post('Card/Kanban/Move', { boardId: S.board.id, listId: listId, cardId: S.util.element.getClassId(item.elem), cardIds: cards });
                             }
@@ -543,6 +794,7 @@
 
                         //remove card from list
                         S.kanban.card.selected.elem.remove();
+                        S.kanban.list.resize(S.kanban.card.selected.listId);
 
                     } else {
                         S.message.show('.board .message', "error", S.message.error.generic);
@@ -569,6 +821,7 @@
 
                         //add card to list
                         $('.board .list.id-' + S.kanban.card.selected.listId + ' .items').append(d);
+                        S.kanban.list.resize(S.kanban.card.selected.listId);
 
                     } else {
                         S.message.show('.board .message', "error", S.message.error.generic);
